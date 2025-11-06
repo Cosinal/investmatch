@@ -1,0 +1,5 @@
+yfinance
+supabase
+python-dotenv
+anthropic
+seaborn
