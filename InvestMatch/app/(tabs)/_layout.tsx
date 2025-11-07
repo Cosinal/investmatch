@@ -6,6 +6,7 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={({ route }) => ({
         headerShown: false,
+        lazy: false, // Preload all tabs immediately
         tabBarStyle: {
           backgroundColor: '#050505',
           borderTopColor: '#111111',

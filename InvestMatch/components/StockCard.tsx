@@ -29,6 +29,7 @@ export type Stock = {
   peRatio?: number;
   dividendYield?: number;
   profitMargin?: number;
+  chartImageUrl?: string;
   executives: Executive[];
   chartData?: ChartPoint[];
 };
@@ -76,7 +77,6 @@ export function summarizeDescription(raw?: string, maxChars: number = 500): stri
 // Slide Components
 const OverviewSlide: React.FC<{ stock: Stock }> = ({ stock }) => {
   const priceColor = (stock.priceChangePct ?? 0) >= 0 ? styles.positive : styles.negative;
-  const sectorIndustry = [stock.sector, stock.industry].filter(Boolean).join(' / ');
 
   return (
     <View style={styles.slide}>
@@ -145,22 +145,18 @@ const AboutSlide: React.FC<{ stock: Stock }> = ({ stock }) => {
 };
 
 const PerformanceSlide: React.FC<{ stock: Stock }> = ({ stock }) => {
-  const hasChartData = Boolean(stock.chartData && stock.chartData.length > 0);
-
-  if (hasChartData) {
-    console.log(`Chart data ready for ${stock.ticker}`, stock.chartData);
-  }
+  const hasChartImage = Boolean(stock.chartImageUrl);
 
   return (
     <View style={styles.slide}>
       <View style={styles.slideContent}>
-        <Text style={styles.slideTitle}>1 Year Performance</Text>
-        {hasChartData ? (
-          <View style={styles.chartPlaceholder}>
-            <Text style={styles.chartPlaceholderText}>
-              Chart data connected ({stock.chartData!.length} points)
-            </Text>
-          </View>
+        <Text style={styles.slideTitle}>YTD Performance</Text>
+        {hasChartImage ? (
+          <Image
+            source={{ uri: stock.chartImageUrl }}
+            style={styles.chartImage}
+            resizeMode="contain"
+          />
         ) : (
           <View style={styles.chartPlaceholder}>
             <Text style={styles.chartPlaceholderText}>Chart coming soon</Text>
@@ -194,10 +190,8 @@ const PerformanceSlide: React.FC<{ stock: Stock }> = ({ stock }) => {
 // Main Component
 const StockCard: React.FC<StockCardProps> = ({ stock }) => {
   const slides = ['OVERVIEW', 'PERFORMANCE', 'ABOUT'] as const;
-  type SlideKey = (typeof slides)[number];
 
   const [slideIndex, setSlideIndex] = useState(0);
-  const currentSlide: SlideKey = slides[slideIndex];
 
   // Navigation functions
   const goPrev = () => {
@@ -208,25 +202,19 @@ const StockCard: React.FC<StockCardProps> = ({ stock }) => {
     setSlideIndex((i) => Math.min(slides.length - 1, i + 1));
   };
 
-  // Render current slide based on index
-  const renderSlide = (slide: SlideKey) => {
-    switch (slide) {
-      case 'OVERVIEW':
-        return <OverviewSlide stock={stock} />;
-      case 'PERFORMANCE':
-        return <PerformanceSlide stock={stock} />;
-      case 'ABOUT':
-        return <AboutSlide stock={stock} />;
-      default:
-        return <OverviewSlide stock={stock} />;
-    }
-  };
-
   return (
     <View style={styles.card}>
-      {/* Slide content */}
+      {/* Render all slides at once, show/hide based on index */}
       <View style={styles.slideContainer}>
-        {renderSlide(currentSlide)}
+        <View style={[styles.slideWrapper, slideIndex === 0 ? styles.slideVisible : styles.slideHidden]}>
+          <OverviewSlide stock={stock} />
+        </View>
+        <View style={[styles.slideWrapper, slideIndex === 1 ? styles.slideVisible : styles.slideHidden]}>
+          <PerformanceSlide stock={stock} />
+        </View>
+        <View style={[styles.slideWrapper, slideIndex === 2 ? styles.slideVisible : styles.slideHidden]}>
+          <AboutSlide stock={stock} />
+        </View>
       </View>
 
       {/* Tap areas for navigation */}
@@ -287,6 +275,21 @@ const styles = StyleSheet.create({
   },
   slideContainer: {
     flex: 1,
+    position: 'relative',
+  },
+  slideWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  slideVisible: {
+    opacity: 1,
+  },
+  slideHidden: {
+    opacity: 0,
+    pointerEvents: 'none',
   },
   slide: {
     flex: 1,
@@ -412,6 +415,12 @@ const styles = StyleSheet.create({
   },
 
   // Performance Slide
+  chartImage: {
+    width: '100%',
+    height: 200,
+    marginBottom: 24,
+    borderRadius: 12,
+  },
   chartPlaceholder: {
     height: 200,
     backgroundColor: '#0f0f0f',

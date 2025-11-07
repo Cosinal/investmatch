@@ -1,112 +1,359 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, Pressable, Alert } from 'react-native';
+import { supabase } from '../../lib/supabaseClient';
+import { useAuth } from '../../lib/AuthContext';
 
-import { Collapsible } from '@/components/ui/collapsible';
-import { ExternalLink } from '@/components/external-link';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Fonts } from '@/constants/theme';
+type WatchlistItem = {
+  id: number;
+  company_id: number;
+  notes: string | null;
+  added_at: string;
+  stocks: {
+    ticker: string;
+    name: string;
+    current_price: number | null;
+    price_change_pct: number | null;
+    market_cap: number | null;
+    sector: string | null;
+  };
+};
 
-export default function TabTwoScreen() {
+export default function WatchlistScreen() {
+  const { user } = useAuth();
+  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadWatchlist = async () => {
+    if (!user) {
+      console.error('No user logged in');
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('user_watchlist')
+        .select(`
+          id,
+          company_id,
+          notes,
+          added_at,
+          stocks (
+            ticker,
+            name,
+            current_price,
+            price_change_pct,
+            market_cap,
+            sector
+          )
+        `)
+        .eq('user_id', user.id)
+        .order('added_at', { ascending: false });
+
+      if (error) {
+        console.error('Error loading watchlist:', error);
+      } else {
+        // Map the data to ensure correct structure (stocks is a single object, not array)
+        const mappedData = (data || []).map((item: any) => ({
+          ...item,
+          stocks: Array.isArray(item.stocks) ? item.stocks[0] : item.stocks,
+        }));
+        setWatchlist(mappedData);
+        console.log(`Loaded ${data?.length || 0} watchlist items`);
+      }
+    } catch (e) {
+      console.error('Unexpected error loading watchlist:', e);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    loadWatchlist();
+  }, [user]);
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    loadWatchlist();
+  };
+
+  const handleRemove = (itemId: number, ticker: string, companyId: number) => {
+    Alert.alert(
+      'Remove from Watchlist',
+      `Remove ${ticker} from your watchlist? This will allow it to reappear in your feed.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            if (!user) return;
+
+            try {
+              console.log(`Removing ${ticker} from watchlist and swipe history...`);
+
+              // Delete from watchlist
+              const { error: watchlistError } = await supabase
+                .from('user_watchlist')
+                .delete()
+                .eq('id', itemId);
+
+              if (watchlistError) {
+                console.error('Error removing from watchlist:', watchlistError);
+                Alert.alert('Error', 'Failed to remove from watchlist');
+                return;
+              }
+
+              // Delete the swipe record so it can reappear in feed
+              const { error: swipeError } = await supabase
+                .from('user_swipes')
+                .delete()
+                .eq('user_id', user.id)
+                .eq('company_id', companyId);
+
+              if (swipeError) {
+                console.error('Error removing swipe record:', swipeError);
+                // Don't show error to user - watchlist removal succeeded
+              }
+
+              console.log(`✅ Removed ${ticker} from watchlist and swipe history`);
+              console.log(`   ${ticker} will reappear in your feed`);
+              setWatchlist((prev) => prev.filter((item) => item.id !== itemId));
+            } catch (e) {
+              console.error('Unexpected error:', e);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const renderItem = ({ item }: { item: WatchlistItem }) => {
+    const stock = item.stocks;
+    const priceChangeColor = (stock.price_change_pct ?? 0) >= 0 ? '#00C853' : '#FF3B30';
+
+    return (
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={styles.stockInfo}>
+            <Text style={styles.ticker}>{stock.ticker}</Text>
+            <Text style={styles.name} numberOfLines={1}>{stock.name}</Text>
+            {stock.sector && (
+              <Text style={styles.sector}>{stock.sector}</Text>
+            )}
+          </View>
+          <Pressable
+            style={styles.removeButton}
+            onPress={() => handleRemove(item.id, stock.ticker, item.company_id)}
+          >
+            <Text style={styles.removeButtonText}>✕</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.cardBody}>
+          {stock.current_price && (
+            <View style={styles.priceRow}>
+              <Text style={styles.price}>${stock.current_price.toFixed(2)}</Text>
+              {stock.price_change_pct !== null && (
+                <Text style={[styles.priceChange, { color: priceChangeColor }]}>
+                  {stock.price_change_pct >= 0 ? '+' : ''}
+                  {stock.price_change_pct.toFixed(2)}%
+                </Text>
+              )}
+            </View>
+          )}
+
+          {stock.market_cap && (
+            <Text style={styles.marketCap}>
+              Market Cap: ${(stock.market_cap / 1e9).toFixed(2)}B
+            </Text>
+          )}
+
+          {item.notes && (
+            <Text style={styles.notes} numberOfLines={2}>
+              {item.notes}
+            </Text>
+          )}
+        </View>
+
+        <Text style={styles.date}>
+          Added {new Date(item.added_at).toLocaleDateString()}
+        </Text>
+      </View>
+    );
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color="#00C853" />
+      </View>
+    );
+  }
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
-      headerImage={
-        <IconSymbol
-          size={310}
-          color="#808080"
-          name="chevron.left.forwardslash.chevron.right"
-          style={styles.headerImage}
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>My Watchlist</Text>
+        <Text style={styles.headerSubtitle}>
+          {watchlist.length} {watchlist.length === 1 ? 'stock' : 'stocks'}
+        </Text>
+      </View>
+
+      {watchlist.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyIcon}>⭐</Text>
+          <Text style={styles.emptyTitle}>Your watchlist is empty</Text>
+          <Text style={styles.emptyText}>
+            Swipe right on stocks you like to add them to your watchlist
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={watchlist}
+          renderItem={renderItem}
+          keyExtractor={(item) => item.id.toString()}
+          contentContainerStyle={styles.listContent}
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
         />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText
-          type="title"
-          style={{
-            fontFamily: Fonts.rounded,
-          }}>
-          Explore
-        </ThemedText>
-      </ThemedView>
-      <ThemedText>This app includes example code to help you get started.</ThemedText>
-      <Collapsible title="File-based routing">
-        <ThemedText>
-          This app has two screens:{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/explore.tsx</ThemedText>
-        </ThemedText>
-        <ThemedText>
-          The layout file in <ThemedText type="defaultSemiBold">app/(tabs)/_layout.tsx</ThemedText>{' '}
-          sets up the tab navigator.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/router/introduction">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Android, iOS, and web support">
-        <ThemedText>
-          You can open this project on Android, iOS, and the web. To open the web version, press{' '}
-          <ThemedText type="defaultSemiBold">w</ThemedText> in the terminal running this project.
-        </ThemedText>
-      </Collapsible>
-      <Collapsible title="Images">
-        <ThemedText>
-          For static images, you can use the <ThemedText type="defaultSemiBold">@2x</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">@3x</ThemedText> suffixes to provide files for
-          different screen densities
-        </ThemedText>
-        <Image
-          source={require('@/assets/images/react-logo.png')}
-          style={{ width: 100, height: 100, alignSelf: 'center' }}
-        />
-        <ExternalLink href="https://reactnative.dev/docs/images">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Light and dark mode components">
-        <ThemedText>
-          This template has light and dark mode support. The{' '}
-          <ThemedText type="defaultSemiBold">useColorScheme()</ThemedText> hook lets you inspect
-          what the user&apos;s current color scheme is, and so you can adjust UI colors accordingly.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/develop/user-interface/color-themes/">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Animations">
-        <ThemedText>
-          This template includes an example of an animated component. The{' '}
-          <ThemedText type="defaultSemiBold">components/HelloWave.tsx</ThemedText> component uses
-          the powerful{' '}
-          <ThemedText type="defaultSemiBold" style={{ fontFamily: Fonts.mono }}>
-            react-native-reanimated
-          </ThemedText>{' '}
-          library to create a waving hand animation.
-        </ThemedText>
-        {Platform.select({
-          ios: (
-            <ThemedText>
-              The <ThemedText type="defaultSemiBold">components/ParallaxScrollView.tsx</ThemedText>{' '}
-              component provides a parallax effect for the header image.
-            </ThemedText>
-          ),
-        })}
-      </Collapsible>
-    </ParallaxScrollView>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  headerImage: {
-    color: '#808080',
-    bottom: -90,
-    left: -35,
-    position: 'absolute',
+  container: {
+    flex: 1,
+    backgroundColor: '#000',
   },
-  titleContainer: {
+  center: {
+    flex: 1,
+    backgroundColor: '#000',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  header: {
+    paddingTop: 60,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+    backgroundColor: '#000',
+  },
+  headerTitle: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: '#fff',
+    marginBottom: 8,
+  },
+  headerSubtitle: {
+    fontSize: 16,
+    color: '#666',
+  },
+  listContent: {
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+  },
+  card: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  cardHeader: {
     flexDirection: 'row',
-    gap: 8,
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  stockInfo: {
+    flex: 1,
+  },
+  ticker: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 4,
+  },
+  name: {
+    fontSize: 14,
+    color: '#aaa',
+    marginBottom: 8,
+  },
+  sector: {
+    fontSize: 12,
+    color: '#666',
+    textTransform: 'uppercase',
+  },
+  removeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#333',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  removeButtonText: {
+    color: '#FF3B30',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  cardBody: {
+    marginBottom: 12,
+  },
+  priceRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    marginBottom: 8,
+  },
+  price: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#fff',
+    marginRight: 12,
+  },
+  priceChange: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  marketCap: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 8,
+  },
+  notes: {
+    fontSize: 14,
+    color: '#aaa',
+    fontStyle: 'italic',
+    marginTop: 8,
+  },
+  date: {
+    fontSize: 12,
+    color: '#666',
+  },
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 48,
+  },
+  emptyIcon: {
+    fontSize: 64,
+    marginBottom: 16,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    lineHeight: 24,
   },
 });
