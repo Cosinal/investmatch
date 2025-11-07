@@ -72,7 +72,7 @@ export function summarizeDescription(raw?: string, maxChars: number = 500): stri
   return `${cleaned.slice(0, maxChars).trimEnd()}...`;
 }
 
-// TODO: Replace summarizeDescription with a call to a Supabase Edge Function that returns an AI-generated summary.
+
 
 // Slide Components
 const OverviewSlide: React.FC<{ stock: Stock }> = ({ stock }) => {
